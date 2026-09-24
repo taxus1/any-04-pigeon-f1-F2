@@ -148,6 +148,94 @@ class PigeonMySqlEndToEndTest {
         }
     }
 
+    private JsonNode entryPost(String raceCode, String bandCode, String basketNo, LocalDateTime at) {
+        try {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("raceCode", raceCode);
+            m.put("bandCode", bandCode);
+            m.put("basketNo", basketNo);
+            if (at != null) {
+                m.put("entryTime", FMT.format(at));
+            }
+            String body = web.post().uri("/api/pigeon/entries")
+                    .header("Authorization", BASIC)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(om.writeValueAsString(m))
+                    .exchange().expectStatus().isOk()
+                    .expectBody(String.class).returnResult().getResponseBody();
+            return om.readTree(body);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private JsonNode entries(String raceCode, int pageNum, int pageSize) {
+        try {
+            String body = web.get().uri("/api/pigeon/races/" + raceCode + "/entries?pageNum=" + pageNum
+                            + "&pageSize=" + pageSize)
+                    .header("Authorization", BASIC)
+                    .exchange().expectStatus().isOk()
+                    .expectBody(String.class).returnResult().getResponseBody();
+            return om.readTree(body);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void mysqlEntryFlow() {
+        LocalDateTime at = RELEASE.minusHours(12);
+
+        // 在档 ACTIVE：赵六收进本场
+        JsonNode ok = entryPost("XF-T-0001", "CHN-T-000004", "A-04", at);
+        assertEquals(0, ok.get("code").asInt(), ok.toString());
+        assertEquals("A-04", ok.get("data").get("basketNo").asText());
+        assertEquals(FMT.format(at), ok.get("data").get("entryTime").asText());
+        assertEquals("A-04", jdbc.queryForObject(
+                "SELECT basket_no FROM t_entry WHERE race_id = ? AND band_id = 920004",
+                String.class, RACE));
+
+        // 同羽同场再报：打回，库行不增
+        JsonNode dup = entryPost("XF-T-0001", "CHN-T-000004", "A-99", at.plusMinutes(5));
+        assertEquals(1, dup.get("code").asInt());
+        assertTrue(dup.get("msg").asText().contains("重复登记"));
+
+        // 停赛 / 注销不收
+        assertEquals(1, entryPost("XF-T-0001", "CHN-T-000005", "A-05", at).get("code").asInt());
+        band(920006L, "CHN-T-000006", "周九", "RETIRED");
+        JsonNode retired = entryPost("XF-T-0001", "CHN-T-000006", "A-06", at);
+        assertEquals(1, retired.get("code").asInt());
+        assertTrue(retired.get("msg").asText().contains("RETIRED"));
+
+        // 不在档的足环 / 不存在的赛项编号
+        JsonNode noBand = entryPost("XF-T-0001", "CHN-T-999999", "A-07", at);
+        assertEquals(1, noBand.get("code").asInt());
+        assertTrue(noBand.get("msg").asText().contains("足环不存在"));
+        JsonNode noRace = entryPost("XF-T-9999", "CHN-T-000004", "A-07", at);
+        assertEquals(1, noRace.get("code").asInt());
+        assertTrue(noRace.get("msg").asText().contains("赛项不存在"));
+
+        // 同羽报进另一场：允许，且两场清单互不串场
+        assertEquals(0, entryPost("XF-T-0002", "CHN-T-000004", "C-04", at).get("code").asInt());
+        JsonNode listRace = entries("XF-T-0001", 1, 100);
+        assertEquals(0, listRace.get("code").asInt());
+        // 预置 3 笔（001/002/003）+ 新收赵六 = 4
+        assertEquals(4, listRace.get("data").get("total").asInt());
+        JsonNode rows = listRace.get("data").get("content");
+        assertEquals("A-04", rows.get(0).get("basketNo").asText());
+        assertEquals("CHN-T-000004", rows.get(0).get("bandCode").asText());
+        assertEquals("赵六", rows.get(0).get("ownerName").asText());
+
+        JsonNode listOther = entries("XF-T-0002", 1, 100);
+        assertEquals(1, listOther.get("data").get("total").asInt());
+        assertEquals("C-04", listOther.get("data").get("content").get(0).get("basketNo").asText());
+
+        // 审计字段由 MetaObjectHandler 填充
+        assertEquals("admin", jdbc.queryForObject(
+                "SELECT create_by FROM t_entry WHERE race_id = ? AND band_id = 920004",
+                String.class, RACE));
+    }
+
     @Test
     void mysqlFullFlow() {
         assertEquals(0, clock("CHN-T-000002", RELEASE.plusHours(4), "SCAN").get("code").asInt());

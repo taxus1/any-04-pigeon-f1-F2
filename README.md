@@ -162,17 +162,33 @@ docker-compose.yml  一键起 mysql+redis
 
 ## 赛鸽训放后半条线（`pigeon` 上下文）
 
-训放「归巢报到 → 算分速排名 → 名次榜」三件事，表结构见 `doc/schema/pigeon.sql`（模型不碰建表）。
+训放「集鸽 → 归巢报到 → 算分速排名 → 名次榜」，表结构见 `doc/schema/pigeon.sql`（模型不碰建表）。
 
 ### 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| POST | `/api/pigeon/entries` | 集鸽登记（开赛前收鸽）。JSON：`raceCode(赛项编号) / bandCode(足环号) / basketNo(笼筐号，可空) / entryTime(yyyy-MM-dd HH:mm:ss，可空，缺省取服务端当前时间)` |
+| GET | `/api/pigeon/races/{raceCode}/entries?pageNum=1&pageSize=20` | 集鸽清单分页：只出指定赛项，按笼筐号升序、同筐按集鸽时间升序，每行足环号、鸽主、笼筐号、集鸽时间 |
 | POST | `/api/pigeon/clocking` | 归巢报到。JSON：`raceId / bandCode / clockAt(yyyy-MM-dd HH:mm:ss) / source(SCAN\|MANUAL)` |
 | POST | `/api/pigeon/races/{raceId}/score` | 出成绩：算分速、排名次；重算整事务覆盖，库里始终只有最新一套 |
 | GET | `/api/pigeon/races/{raceId}/rank?pageNum=1&pageSize=20` | 名次榜分页：足环号、鸽主、归巢时刻、分速、名次 |
 
-### 业务规则落点
+> 赛项定位两套键：集鸽登记/清单走业务键 **赛项编号 `raceCode`**（会员与秘书日常报的就是编号），
+> 报到/成绩/名次沿用赛项 `id`（路径参数是数字，Spring 直接按 Long 绑定，不存在二义）。
+
+### 业务规则落点（集鸽）
+
+- 登记校验（任一不过返回 `code=1` + 中文原因，绝不闷头入库）：赛项编号存在 → 足环在档案里
+  → 状态可收：`RETIRED`（注销）、`SUSPENDED`（停赛）一律不收 → 同一羽报同一场赛只能登一次
+  （应用层先查 + `t_entry.uk_race_band` 库侧并发兜底，手滑报两遍打回）。同羽报**不同**场次允许。
+- 跨聚合校验（赛项/足环存在性、状态、重复）在 `EntryAppService` 编排；单条登记自身不变量
+  （笼筐号 trim、空串归一 null、收鸽时刻缺省 now）在领域工厂 `Entry.checkIn`。
+- 集鸽清单是 `t_entry` 联 `t_band` 的单条 SQL（每张表显式 `del_flag=0`），PageHelper 分页；
+  SQL 只按 `race_id` 过滤，秘书对筐只翻这一场，别的场次进不来。排序 `basket_no, entry_time, id`。
+- 收鸽时间 `entry_time` 是业务字段（会员送鸽的时刻），与审计字段 `create_time`（系统落库时刻）分开记。
+
+### 业务规则落点（报到之后）
 
 - 报到校验（任一不过返回 `code=1` + 中文原因，绝不闷头入库）：赛项存在 → 足环存在且 `ACTIVE`
   → 本场赛集过鸽（`t_entry`）→ 该集鸽无报到记录（`t_clocking.uk_entry` + 库侧并发兜底）
