@@ -25,4 +25,14 @@ public final class EntryPoConverter {
         d.setUpdateTime(po.getUpdateTime());
         return d;
     }
+
+    public static EntryPO toPo(Entry d) {
+        EntryPO po = new EntryPO();
+        po.setId(d.getId());
+        po.setRaceId(d.getRaceId());
+        po.setBandId(d.getBandId());
+        po.setBasketNo(d.getBasketNo());
+        po.setEntryTime(d.getEntryTime());
+        return po;
+    }
 }

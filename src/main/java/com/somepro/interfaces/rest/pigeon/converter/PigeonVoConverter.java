@@ -1,10 +1,14 @@
 package com.somepro.interfaces.rest.pigeon.converter;
 
 import com.somepro.domain.pigeon.model.Clocking;
+import com.somepro.domain.pigeon.model.Entry;
+import com.somepro.domain.pigeon.model.EntryRow;
 import com.somepro.domain.pigeon.model.RaceResult;
 import com.somepro.domain.pigeon.model.RankRow;
 import com.somepro.domain.shared.model.PageResult;
 import com.somepro.interfaces.rest.pigeon.vo.ClockingVO;
+import com.somepro.interfaces.rest.pigeon.vo.EntryRowVO;
+import com.somepro.interfaces.rest.pigeon.vo.EntryVO;
 import com.somepro.interfaces.rest.pigeon.vo.PageVO;
 import com.somepro.interfaces.rest.pigeon.vo.RaceResultVO;
 import com.somepro.interfaces.rest.pigeon.vo.RankRowVO;
@@ -34,6 +38,22 @@ public final class PigeonVoConverter {
 
     public static ClockingVO toClockingVo(Clocking d) {
         return new ClockingVO(d.getId(), d.getRaceId(), d.getEntryId(), d.getClockAt(), d.getSource());
+    }
+
+    public static EntryVO toEntryVo(Entry d) {
+        return new EntryVO(d.getId(), d.getRaceId(), d.getBandId(), d.getBasketNo(), d.getEntryTime());
+    }
+
+    public static EntryRowVO toEntryRowVo(EntryRow row) {
+        return new EntryRowVO(row.entryId(), row.bandCode(), row.ownerName(),
+                row.basketNo(), row.entryTime());
+    }
+
+    public static PageVO<EntryRowVO> toEntryPageVo(PageResult<EntryRow> page) {
+        List<EntryRowVO> content = page.content().stream()
+                .map(PigeonVoConverter::toEntryRowVo)
+                .collect(Collectors.toList());
+        return new PageVO<>(content, page.total(), page.pageNum(), page.pageSize(), page.totalPages());
     }
 
     public static RaceResultVO toResultVo(RaceResult d) {

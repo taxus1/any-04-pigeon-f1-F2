@@ -162,18 +162,26 @@ docker-compose.yml  一键起 mysql+redis
 
 ## 赛鸽训放后半条线（`pigeon` 上下文）
 
-训放「归巢报到 → 算分速排名 → 名次榜」三件事，表结构见 `doc/schema/pigeon.sql`（模型不碰建表）。
+集鸽「登记 → 对筐清单」前半条线 + 训放「归巢报到 → 算分速排名 → 名次榜」后半条线，
+表结构见 `doc/schema/pigeon.sql`（模型不碰建表）。
 
 ### 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| POST | `/api/pigeon/entries` | 集鸽登记。JSON：`raceCode(赛项编号) / bandCode(足环号) / basketNo(笼筐号，可空) / entryTime(yyyy-MM-dd HH:mm:ss，空=系统当前时间)` |
+| GET | `/api/pigeon/races/entries?raceCode=XF-2026-018&pageNum=1&pageSize=20` | 集鸽清单分页：只翻这一场赛，按笼筐号升序，每行足环号、鸽主、笼筐号、收鸽时间 |
 | POST | `/api/pigeon/clocking` | 归巢报到。JSON：`raceId / bandCode / clockAt(yyyy-MM-dd HH:mm:ss) / source(SCAN\|MANUAL)` |
 | POST | `/api/pigeon/races/{raceId}/score` | 出成绩：算分速、排名次；重算整事务覆盖，库里始终只有最新一套 |
 | GET | `/api/pigeon/races/{raceId}/rank?pageNum=1&pageSize=20` | 名次榜分页：足环号、鸽主、归巢时刻、分速、名次 |
 
 ### 业务规则落点
 
+- 集鸽校验（任一不过返回 `code=1` + 中文原因，绝不闷头入库）：赛项编号存在 →
+  足环档案存在 → 足环在赛（`RETIRED` 注销 / `SUSPENDED` 停赛一律不收）→
+  同一羽报同一场只登一次（先查 `t_entry`，`uk_race_band` + 库侧并发兜底，手滑报两遍打回）。
+- 集鸽清单按 `race_id` 单场过滤的联表 SQL（`EntryMapper#selectEntryRows`，每张表显式 `del_flag=0`），
+  秘书对筐只翻这一场，别的场次不混进来；PageHelper 分页，笼筐号升序、同筐按收鸽时间先后。
 - 报到校验（任一不过返回 `code=1` + 中文原因，绝不闷头入库）：赛项存在 → 足环存在且 `ACTIVE`
   → 本场赛集过鸽（`t_entry`）→ 该集鸽无报到记录（`t_clocking.uk_entry` + 库侧并发兜底）
   → 归巢时刻晚于 `release_at`、不晚于 `close_at`（空=不限，踩点关门有效）→ 来源仅 `SCAN/MANUAL`。
